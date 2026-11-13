@@ -1,21 +1,60 @@
-// Package app wires the whole HTTP API together.
-//
-// The automatic tests talk to your API ONLY through NewRouter(), so you are free to
-// organise the rest of the code (model, repository, handler, middleware) as you like.
 package app
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
 
-// NewRouter must return a fully configured HTTP handler for your resource.
-//
-// Requirements (see README.md for the full contract):
-//   - every call returns a NEW router with its own EMPTY in-memory storage;
-//   - it must be safe for concurrent requests;
-//   - it can be built with net/http, gin, chi or any other router.
-//
-// TODO: replace this stub with your implementation.
+	"homework/internal/handler"
+	"homework/internal/middleware"
+	"homework/internal/repository"
+)
+
 func NewRouter() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "not implemented", http.StatusNotImplemented)
+	repo := repository.New()
+	h := handler.New(repo)
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/health", h.Health)
+
+	mux.HandleFunc("/api/v1/books", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			h.List(w, r)
+		case http.MethodPost:
+			h.Create(w, r)
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			w.Write([]byte(`{"error":{"code":"method_not_allowed","message":"Method not allowed"}}`))
+		}
 	})
+
+	mux.HandleFunc("/api/v1/books/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/books/")
+		if path == "" || strings.Contains(path, "/") {
+			http.NotFound(w, r)
+			return
+		}
+
+		switch r.Method {
+		case http.MethodGet:
+			h.Get(w, r)
+		case http.MethodPut:
+			h.Update(w, r)
+		case http.MethodDelete:
+			h.Delete(w, r)
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			w.Write([]byte(`{"error":{"code":"method_not_allowed","message":"Method not allowed"}}`))
+		}
+	})
+
+	var chain http.Handler = mux
+	chain = middleware.Recovery(chain)
+	chain = middleware.Logging(chain)
+	chain = middleware.CORS(chain)
+
+	return chain
 }
